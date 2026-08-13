@@ -111,11 +111,23 @@ function drawImageScaled(img, ctx,w,h) {
   ctx.drawImage(img, centerShift_x,centerShift_y, w, h);  
 }
 
- function download(file,o,canvas){
+function download(file, o, canvas) {
   var link = document.createElement('a');
-  link.download = file.name;
-  //var Pic = canvas.toDataURL("image/png");
-   link.href =URL.createObjectURL(o);
-   link.click();
+
+  // Pisahkan nama file dan ekstensi
+  const lastDot = file.name.lastIndexOf('.');
+  let fileName;
+
+  if (lastDot !== -1) {
+    const name = file.name.substring(0, lastDot);
+    const ext = file.name.substring(lastDot);
+    fileName = `${name}-thumb${ext}`;
+  } else {
+    fileName = `${file.name}-thumb`;
+  }
+
+  link.download = fileName;
+  link.href = URL.createObjectURL(o);
+  link.click();
 }
 
