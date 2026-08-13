@@ -16,7 +16,6 @@ const DOM = {
   qualityVal: document.getElementById("quality-val"),
   maxWidth: document.getElementById("max-width"),
   maxHeight: document.getElementById("max-height"),
-  processBtn: document.getElementById("process-btn"),
   canvas: document.getElementById("canvas"),
   ctx: document.getElementById("canvas").getContext("2d"),
   infoCard: document.getElementById("info-card"),
@@ -27,12 +26,19 @@ const DOM = {
 
 // Inisialisasi Event Listener
 function initEvents() {
+  // Auto-process & download saat file dipilih
   DOM.fileInput.addEventListener("change", handleFileSelect);
+
   DOM.qualityRange.addEventListener("input", (e) => {
     DOM.qualityVal.textContent = `${Math.round(e.target.value * 100)}%`;
   });
 
-  // Drag & Drop
+  // Jika opsi dikosongkan/diubah, langsung proses ulang gambar yang ada
+  DOM.qualityRange.addEventListener("change", () => currentFile && processAndDownload());
+  DOM.maxWidth.addEventListener("change", () => currentFile && processAndDownload());
+  DOM.maxHeight.addEventListener("change", () => currentFile && processAndDownload());
+
+  // Drag & Drop Handling
   DOM.dropZone.addEventListener("dragover", (e) => {
     e.preventDefault();
     DOM.dropZone.classList.add("dragover");
@@ -50,11 +56,9 @@ function initEvents() {
       handleFileSelect();
     }
   });
-
-  DOM.processBtn.addEventListener("click", processAndDownload);
 }
 
-// Event Handler: File Dipilih
+// Event Handler: File Dipilih (Langsung Auto-Process)
 async function handleFileSelect() {
   const file = DOM.fileInput.files[0];
   if (!file) return;
@@ -65,18 +69,19 @@ async function handleFileSelect() {
   }
 
   currentFile = file;
-  DOM.processBtn.disabled = false;
-
-  // Render preview pertama kali
-  await renderImage();
+  
+  // Eksekusi Otomatis
+  await processAndDownload();
 }
 
-// Render Gambar ke Canvas
-async function renderImage() {
+// Render Gambar & Unduh Otomatis
+async function processAndDownload() {
   if (!currentFile) return;
 
   try {
     const img = await loadImage(URL.createObjectURL(currentFile));
+    
+    // Lazy-load background image sekali saja
     if (!bgImageCache) {
       bgImageCache = await loadImage(CONFIG.BG_IMAGE_URL).catch(() => null);
     }
@@ -85,14 +90,14 @@ async function renderImage() {
     const maxH = parseInt(DOM.maxHeight.value) || 1200;
     const [newWidth, newHeight] = calculateSize(img, maxW, maxH);
 
-    // Set Ukuran Canvas Tetap
+    // Set Ukuran Canvas
     DOM.canvas.width = CONFIG.CANVAS_SIZE;
     DOM.canvas.height = CONFIG.CANVAS_SIZE;
 
-    // Clear Canvas
+    // Bersihkan Canvas
     DOM.ctx.clearRect(0, 0, CONFIG.CANVAS_SIZE, CONFIG.CANVAS_SIZE);
 
-    // Draw Background Frame (jika ada, jika tidak pakai warna solid putih)
+    // Render Background Frame / Solid White
     if (bgImageCache) {
       DOM.ctx.drawImage(bgImageCache, 0, 0, CONFIG.CANVAS_SIZE, CONFIG.CANVAS_SIZE);
     } else {
@@ -100,34 +105,30 @@ async function renderImage() {
       DOM.ctx.fillRect(0, 0, CONFIG.CANVAS_SIZE, CONFIG.CANVAS_SIZE);
     }
 
-    // Draw Main Scaled Image (Center Alignment)
+    // Render Gambar Utama (Presisi posisi awal Anda)
     drawImageCentered(DOM.ctx, img, newWidth, newHeight);
 
     URL.revokeObjectURL(img.src);
+
+    // Auto-Compress dan Direct Download
+    const quality = parseFloat(DOM.qualityRange.value);
+    DOM.canvas.toBlob((blob) => {
+      if (!blob) return;
+
+      // Update statistik file di UI
+      updateStats(currentFile.size, blob.size);
+
+      // Pemicu Otomatis Unduh File
+      downloadBlob(blob, currentFile.name);
+    }, CONFIG.MIME_TYPE, quality);
+
   } catch (error) {
     console.error("Gagal memproses gambar:", error);
     alert("Terjadi kesalahan saat memuat gambar.");
   }
 }
 
-// Proses Kompresi dan Auto-Download
-async function processAndDownload() {
-  await renderImage(); // Pastikan state canvas terbaru
-
-  const quality = parseFloat(DOM.qualityRange.value);
-
-  DOM.canvas.toBlob((blob) => {
-    if (!blob) return;
-
-    // Update UI Stats
-    updateStats(currentFile.size, blob.size);
-
-    // Trigger Download
-    downloadBlob(blob, currentFile.name);
-  }, CONFIG.MIME_TYPE, quality);
-}
-
-// Helper: Menghitung Proporsi Gambar (Aspect Ratio)
+// Helper: Hitung Aspect Ratio
 function calculateSize(img, maxWidth, maxHeight) {
   let { width, height } = img;
 
@@ -145,17 +146,16 @@ function calculateSize(img, maxWidth, maxHeight) {
   return [width, height];
 }
 
-// Helper: Posisikan Gambar di Tengah Canvas
+// Helper: Posisikan Gambar di Tengah (Offset -3.5% Y-axis)
 function drawImageCentered(ctx, img, width, height) {
   const canvas = ctx.canvas;
   const centerX = (canvas.width - width) / 2;
-  // Offset vertikal khusus sesuai kalkulasi awal (-3.5%)
   const centerY = (canvas.height - height) / 2 - (canvas.height / 100) * 3.5;
 
   ctx.drawImage(img, centerX, centerY, width, height);
 }
 
-// Helper: Load Image Async
+// Helper: Load Image Promisified
 function loadImage(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -165,7 +165,7 @@ function loadImage(src) {
   });
 }
 
-// Helper: Download File
+// Helper: Eksekusi Auto-Download
 function downloadBlob(blob, originalName) {
   const lastDot = originalName.lastIndexOf(".");
   const name = lastDot !== -1 ? originalName.substring(0, lastDot) : originalName;
@@ -175,12 +175,16 @@ function downloadBlob(blob, originalName) {
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
   link.download = fileName;
+  
+  // Trigger klik otomatis
+  document.body.appendChild(link);
   link.click();
+  document.body.removeChild(link);
   
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
-// Helper: Tampilkan Ukuran File & Rasio
+// Helper: Update Informasi Ukuran
 function updateStats(originalBytes, compressedBytes) {
   DOM.origSize.textContent = readableBytes(originalBytes);
   DOM.compSize.textContent = readableBytes(compressedBytes);
@@ -198,5 +202,5 @@ function readableBytes(bytes) {
   return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
 }
 
-// Jalankan saat DOM SIAP
+// Inisialisasi
 document.addEventListener("DOMContentLoaded", initEvents);
