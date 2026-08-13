@@ -1,66 +1,136 @@
-const MAX_WIDTH = 1200;
-const MAX_HEIGHT = 1200;
-const MIME_TYPE = "image/jpeg";
-const QUALITY = 0.4;
-
-const input = document.getElementById("img-input");
-input.addEventListener("change", aa, false);
-
-async function  aa() {
-  const file = this.files[0]; // get the file
-  const blobURL = URL.createObjectURL(file);
-  const img = new Image();
-  const imgBg= await loadImage("BLANK.jpg");
-  const canvas = document.getElementById("canvas");
-
-  img.src = blobURL;
-
-
-  img.onerror = function () {
-    URL.revokeObjectURL(this.src);
-    // Handle the failure properly
-    console.log("Cannot load image");
-  };
-  img.onload = async function () {
-    URL.revokeObjectURL(this.src);
-    const [newWidth, newHeight] = calculateSize(img, MAX_WIDTH, MAX_HEIGHT);
-    canvas.width = 1500;
-    canvas.height = 1500;
-    const ctx = canvas.getContext("2d");
-
-    var scale = Math.min(canvas.width / newWidth, canvas.height / newHeight);
-    var w = newWidth * scale;
-    var h = newHeight * scale;
-    var link = document.createElement("a");
-
-    ctx.drawImage(imgBg, 0, 0);
-
-    //img bg
-    drawImageScaled(img, ctx,newWidth,newHeight);
-    //ctx.drawImage(img, left, top, newWidth, newHeight);
-    //img transparant
-    document.getElementById("root").append(canvas);
-
-    canvas.toBlob(
-      (blob) => {
-        // Handle the compressed image. es. upload or save in local state
-        displayInfo('Original file', file);
-        displayInfo('Compressed file', blob);
-        download(file,blob,canvas);
-        console.log(link.href);
-      },
-      MIME_TYPE,
-      QUALITY
-    );
-  };
- // download(file,canvas);
+// Konfigurasi Default & State Management
+const CONFIG = {
+  CANVAS_SIZE: 1500,
+  MIME_TYPE: "image/jpeg",
+  BG_IMAGE_URL: "BLANK.jpg"
 };
 
-function calculateSize(img, maxWidth, maxHeight) {
-  let width = img.width;
-  let height = img.height;
+let currentFile = null;
+let bgImageCache = null;
 
-  // calculate the width and height, constraining the proportions
+// DOM Elements
+const DOM = {
+  fileInput: document.getElementById("img-input"),
+  dropZone: document.getElementById("drop-zone"),
+  qualityRange: document.getElementById("quality-range"),
+  qualityVal: document.getElementById("quality-val"),
+  maxWidth: document.getElementById("max-width"),
+  maxHeight: document.getElementById("max-height"),
+  processBtn: document.getElementById("process-btn"),
+  canvas: document.getElementById("canvas"),
+  ctx: document.getElementById("canvas").getContext("2d"),
+  infoCard: document.getElementById("info-card"),
+  origSize: document.getElementById("orig-size"),
+  compSize: document.getElementById("comp-size"),
+  savedRatio: document.getElementById("saved-ratio")
+};
+
+// Inisialisasi Event Listener
+function initEvents() {
+  DOM.fileInput.addEventListener("change", handleFileSelect);
+  DOM.qualityRange.addEventListener("input", (e) => {
+    DOM.qualityVal.textContent = `${Math.round(e.target.value * 100)}%`;
+  });
+
+  // Drag & Drop
+  DOM.dropZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    DOM.dropZone.classList.add("dragover");
+  });
+  
+  DOM.dropZone.addEventListener("dragleave", () => {
+    DOM.dropZone.classList.remove("dragover");
+  });
+
+  DOM.dropZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    DOM.dropZone.classList.remove("dragover");
+    if (e.dataTransfer.files.length) {
+      DOM.fileInput.files = e.dataTransfer.files;
+      handleFileSelect();
+    }
+  });
+
+  DOM.processBtn.addEventListener("click", processAndDownload);
+}
+
+// Event Handler: File Dipilih
+async function handleFileSelect() {
+  const file = DOM.fileInput.files[0];
+  if (!file) return;
+
+  if (!file.type.startsWith("image/")) {
+    alert("Harap pilih file gambar yang valid!");
+    return;
+  }
+
+  currentFile = file;
+  DOM.processBtn.disabled = false;
+
+  // Render preview pertama kali
+  await renderImage();
+}
+
+// Render Gambar ke Canvas
+async function renderImage() {
+  if (!currentFile) return;
+
+  try {
+    const img = await loadImage(URL.createObjectURL(currentFile));
+    if (!bgImageCache) {
+      bgImageCache = await loadImage(CONFIG.BG_IMAGE_URL).catch(() => null);
+    }
+
+    const maxW = parseInt(DOM.maxWidth.value) || 1200;
+    const maxH = parseInt(DOM.maxHeight.value) || 1200;
+    const [newWidth, newHeight] = calculateSize(img, maxW, maxH);
+
+    // Set Ukuran Canvas Tetap
+    DOM.canvas.width = CONFIG.CANVAS_SIZE;
+    DOM.canvas.height = CONFIG.CANVAS_SIZE;
+
+    // Clear Canvas
+    DOM.ctx.clearRect(0, 0, CONFIG.CANVAS_SIZE, CONFIG.CANVAS_SIZE);
+
+    // Draw Background Frame (jika ada, jika tidak pakai warna solid putih)
+    if (bgImageCache) {
+      DOM.ctx.drawImage(bgImageCache, 0, 0, CONFIG.CANVAS_SIZE, CONFIG.CANVAS_SIZE);
+    } else {
+      DOM.ctx.fillStyle = "#ffffff";
+      DOM.ctx.fillRect(0, 0, CONFIG.CANVAS_SIZE, CONFIG.CANVAS_SIZE);
+    }
+
+    // Draw Main Scaled Image (Center Alignment)
+    drawImageCentered(DOM.ctx, img, newWidth, newHeight);
+
+    URL.revokeObjectURL(img.src);
+  } catch (error) {
+    console.error("Gagal memproses gambar:", error);
+    alert("Terjadi kesalahan saat memuat gambar.");
+  }
+}
+
+// Proses Kompresi dan Auto-Download
+async function processAndDownload() {
+  await renderImage(); // Pastikan state canvas terbaru
+
+  const quality = parseFloat(DOM.qualityRange.value);
+
+  DOM.canvas.toBlob((blob) => {
+    if (!blob) return;
+
+    // Update UI Stats
+    updateStats(currentFile.size, blob.size);
+
+    // Trigger Download
+    downloadBlob(blob, currentFile.name);
+  }, CONFIG.MIME_TYPE, quality);
+}
+
+// Helper: Menghitung Proporsi Gambar (Aspect Ratio)
+function calculateSize(img, maxWidth, maxHeight) {
+  let { width, height } = img;
+
   if (width > height) {
     if (width > maxWidth) {
       height = Math.round((height * maxWidth) / width);
@@ -75,59 +145,58 @@ function calculateSize(img, maxWidth, maxHeight) {
   return [width, height];
 }
 
-// Utility functions for demo purpose
+// Helper: Posisikan Gambar di Tengah Canvas
+function drawImageCentered(ctx, img, width, height) {
+  const canvas = ctx.canvas;
+  const centerX = (canvas.width - width) / 2;
+  // Offset vertikal khusus sesuai kalkulasi awal (-3.5%)
+  const centerY = (canvas.height - height) / 2 - (canvas.height / 100) * 3.5;
 
-function displayInfo(label, file) {
-  const p = document.createElement('p');
-  p.innerText = `${label} - ${readableBytes(file.size)}`;
-  document.getElementById('root').append(p);
+  ctx.drawImage(img, centerX, centerY, width, height);
+}
+
+// Helper: Load Image Async
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = (err) => reject(err);
+    img.src = src;
+  });
+}
+
+// Helper: Download File
+function downloadBlob(blob, originalName) {
+  const lastDot = originalName.lastIndexOf(".");
+  const name = lastDot !== -1 ? originalName.substring(0, lastDot) : originalName;
+  const ext = lastDot !== -1 ? originalName.substring(lastDot) : ".jpg";
+  const fileName = `${name}-thumb${ext}`;
+
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = fileName;
+  link.click();
+  
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+// Helper: Tampilkan Ukuran File & Rasio
+function updateStats(originalBytes, compressedBytes) {
+  DOM.origSize.textContent = readableBytes(originalBytes);
+  DOM.compSize.textContent = readableBytes(compressedBytes);
+
+  const savedPercent = Math.max(0, ((originalBytes - compressedBytes) / originalBytes) * 100).toFixed(1);
+  DOM.savedRatio.textContent = `-${savedPercent}%`;
+
+  DOM.infoCard.classList.remove("hidden");
 }
 
 function readableBytes(bytes) {
-  const i = Math.floor(Math.log(bytes) / Math.log(1024)),
-    sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-
+  if (bytes === 0) return '0 B';
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
 }
 
-function loadImage(url) {
-  return new Promise(r => { let i = new Image(); i.onload = (() => r(i)); i.src = url; });
-}
-
-function drawImageScaled(img, ctx,w,h) {
-  // var canvas = ctx.canvas ;
-  // var hRatio = canvas.width  / w    ;
-  // var vRatio =  canvas.height / h  ;
-  // var ratio  = Math.min ( hRatio, vRatio );
-  // var centerShift_x = ( canvas.width - w*ratio ) / 2;
-  // var centerShift_y = ( canvas.height - h*ratio ) / 2;  
-  var canvas = ctx.canvas ;
-  var cW2 = canvas.width  / 2   ;
-  var cH2 =  canvas.height / 2  ;
-  var centerShift_x =cW2 - (w/2);
-  var centerShift_y = (cH2 - (h/2)- (canvas.height/100)*3.5); 
-
-
-  ctx.drawImage(img, centerShift_x,centerShift_y, w, h);  
-}
-
-function download(file, o, canvas) {
-  var link = document.createElement('a');
-
-  // Pisahkan nama file dan ekstensi
-  const lastDot = file.name.lastIndexOf('.');
-  let fileName;
-
-  if (lastDot !== -1) {
-    const name = file.name.substring(0, lastDot);
-    const ext = file.name.substring(lastDot);
-    fileName = `${name}-thumb${ext}`;
-  } else {
-    fileName = `${file.name}-thumb`;
-  }
-
-  link.download = fileName;
-  link.href = URL.createObjectURL(o);
-  link.click();
-}
-
+// Jalankan saat DOM SIAP
+document.addEventListener("DOMContentLoaded", initEvents);
